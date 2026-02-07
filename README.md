@@ -8,7 +8,6 @@ Local-first setup so you can test **before** adding Stripe, Supabase, Vercel, or
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.back.txt
-pip install rich
 ```
 
 ## 2) Optional env file (no keys needed to test)
@@ -47,6 +46,19 @@ Once this passes, start wiring providers in this order:
 2. Stripe Connect + webhook reconciliation
 3. Render API deploy
 4. Vercel web client deploy
+
+
+## Complete local MVP engine
+
+For full local business-logic coverage (including role gates and settlement flows), run the complete engine + tests:
+
+```bash
+python3 -m py_compile redline_complete.py scripts/complete_platform_test.py scripts/no_keys_smoke_test.py redline_demo-sonnet4.5.py
+python3 scripts/no_keys_smoke_test.py
+python3 scripts/complete_platform_test.py
+```
+
+The demo has an offline-safe Rich fallback, so local runs do not require runtime `pip install rich`.
 
 ## Product rollout plan
 
