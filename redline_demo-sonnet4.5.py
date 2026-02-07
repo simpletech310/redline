@@ -21,8 +21,10 @@ from dataclasses import dataclass, asdict, field
 from enum import Enum
 import random
 
-# Rich library for beautiful terminal output
-try:
+# Rich library for enhanced terminal output (with offline-safe fallback)
+import importlib.util
+
+if importlib.util.find_spec("rich") is not None:
     from rich.console import Console
     from rich.table import Table
     from rich.panel import Panel
@@ -32,18 +34,75 @@ try:
     from rich import box
     from rich.columns import Columns
     RICH_AVAILABLE = True
-except ImportError:
+else:
     RICH_AVAILABLE = False
-    print("⚠️  Installing required package: rich")
-    os.system("pip install rich")
-    from rich.console import Console
-    from rich.table import Table
-    from rich.panel import Panel
-    from rich.prompt import Prompt, Confirm
-    from rich.layout import Layout
-    from rich.text import Text
-    from rich import box
-    from rich.columns import Columns
+
+    class Console:
+        def print(self, *args, **kwargs):
+            print(*args)
+
+        def clear(self):
+            print("\n" * 2)
+
+    class Panel:
+        def __init__(self, renderable, title=None, border_style=None, padding=None):
+            self.renderable = renderable
+            self.title = title
+
+        @staticmethod
+        def fit(renderable, border_style=None):
+            return renderable
+
+        def __str__(self):
+            return f"{self.title + chr(10) if self.title else ''}{self.renderable}"
+
+    class Table:
+        def __init__(self, title=None, box=None, show_header=True, header_style=None):
+            self.title = title
+            self.rows = []
+
+        def add_column(self, *args, **kwargs):
+            return None
+
+        def add_row(self, *args, **kwargs):
+            self.rows.append(args)
+
+        def __str__(self):
+            lines = [self.title] if self.title else []
+            lines.extend(" | ".join(str(c) for c in row) for row in self.rows)
+            return "\n".join(lines)
+
+    class Prompt:
+        @staticmethod
+        def ask(prompt, choices=None, default=None):
+            suffix = f" [{'/'.join(choices)}]" if choices else ""
+            raw = input(f"{prompt}{suffix}: ").strip()
+            if not raw and default is not None:
+                return default
+            return raw
+
+    class Confirm:
+        @staticmethod
+        def ask(prompt, default=False):
+            raw = input(f"{prompt} (y/n): ").strip().lower()
+            if not raw:
+                return default
+            return raw in {"y", "yes"}
+
+    class Layout:
+        pass
+
+    class Text(str):
+        pass
+
+    class _Box:
+        SIMPLE = None
+        ROUNDED = None
+
+    box = _Box()
+
+    class Columns(list):
+        pass
 
 console = Console()
 
