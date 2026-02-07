@@ -59,12 +59,17 @@ def run_complete_test() -> None:
     print("- Ranking confidence and hype metadata initialized")
 
 
+def run_complete_platform_api_test() -> None:
+    """Compatibility wrapper used by merge checks and CI jobs."""
+    run_complete_test()
+
+
 def main() -> int:
     if not DEMO_FILE.exists():
         print(f"ERROR: Missing demo file at {DEMO_FILE}", file=sys.stderr)
         return 1
 
-    run_complete_test()
+    run_complete_platform_api_test()
     return 0
 
 
