@@ -54,3 +54,13 @@ python redline_demo-sonnet4.5.py
 2. Stripe Connect + webhook reconciliation
 3. Render API deploy
 4. Vercel web client deploy
+
+## API (FastAPI + Postgres/Supabase)
+
+A new API is available at `apps/api` with service-layer modules and repository-backed data access.
+
+Run locally:
+
+```bash
+uvicorn apps.api.main:app --reload
+```
