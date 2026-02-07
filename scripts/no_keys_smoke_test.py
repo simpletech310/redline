@@ -55,6 +55,8 @@ def run_smoke_test() -> None:
     assert spectator is not None and spectator.wallet is not None
 
     start_balance = spectator.wallet.balance
+    platform.deposit(spectator, 25.0)
+    assert spectator.wallet.balance == start_balance + 25.0
 
     run_id = "run_001"
     run = platform.runs[run_id]
@@ -78,7 +80,10 @@ def run_smoke_test() -> None:
     platform.picks[pick_id] = new_pick
     spectator.wallet.add_transaction(-amount, f"Pick placed - {run.name}", "pick_placed")
 
-    assert spectator.wallet.balance == start_balance - amount
+    assert spectator.wallet.balance == (start_balance + 25.0) - amount
+
+    platform.withdraw(spectator, 5.0)
+    assert spectator.wallet.balance == (start_balance + 25.0) - amount - 5.0
 
     # Create a future run and join it with a jockey to validate entry deduction.
     assert platform.login("Turbo"), "Expected jockey login to succeed"
@@ -104,6 +109,21 @@ def run_smoke_test() -> None:
     )
 
     assert created_run_id in platform.runs
+
+    # Validate account-creation endpoint jurisdiction controls.
+    blocked = False
+    try:
+        platform.create_account(
+            username="BlockedUser",
+            email="blocked@redline.local",
+            account_type=demo.AccountType.SPECTATOR,
+            jurisdiction="US-WA",
+            age=25,
+            kyc_verified=True,
+        )
+    except ValueError:
+        blocked = True
+    assert blocked, "Expected account creation to fail for restricted region"
 
     print("\n== Smoke test assertions passed ==")
     print("- Demo initialized without external API keys")

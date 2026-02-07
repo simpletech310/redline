@@ -47,3 +47,11 @@ Once this passes, start wiring providers in this order:
 2. Stripe Connect + webhook reconciliation
 3. Render API deploy
 4. Vercel web client deploy
+
+
+## Compliance controls added in demo
+
+- Regional policy matrix with skill-game status, DFS carveout flags, restricted-location markers, and KYC/age thresholds (`docs_regulatory_policy_matrix.md`).
+- Geolocation + jurisdiction checks at account creation, deposit, pick placement, and withdrawal flows.
+- Runtime feature flags to disable specific pick types by region without redeploy.
+- User-facing onboarding and pick-confirmation disclosures for regulatory clarity.

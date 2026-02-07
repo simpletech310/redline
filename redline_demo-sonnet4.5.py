@@ -136,6 +136,19 @@ class PickType(Enum):
     PODIUM = "Podium"
     TIME_BRACKET = "Time Bracket"
 
+
+@dataclass(frozen=True)
+class JurisdictionPolicy:
+    """Regulatory policy snapshot used for runtime enforcement."""
+
+    region_code: str
+    display_name: str
+    skill_game_allowed: bool
+    dfs_carveout: bool
+    restricted: bool
+    minimum_age: int
+    notes: str
+
 class MachineClass(Enum):
     STREET = "Street"
     SPORT = "Sport"
@@ -255,6 +268,9 @@ class Account:
     wallet: Optional[RedlineWallet] = None
     team_members: List[str] = field(default_factory=list)  # For team owners
     team_owner_id: Optional[str] = None  # For jockeys on a team
+    jurisdiction: str = "US-CA"
+    age: int = 21
+    kyc_verified: bool = True
 
 # ============================================================================
 # REDLINE PLATFORM - MAIN ENGINE
@@ -269,6 +285,28 @@ class RedlinePlatform:
         self.picks: Dict[str, RedlinePick] = {}
         self.current_user: Optional[Account] = None
         self.data_file = "redline_data.json"
+        self.feature_flags: Dict[str, Dict[str, bool]] = {
+            "pick_types_by_region": {
+                "default:Winner": True,
+                "default:Podium": True,
+                "default:Time Bracket": True,
+                "US-NV:Time Bracket": False,
+                "US-WA:Podium": False,
+                "US-ID:Winner": False,
+                "US-ID:Podium": False,
+                "US-ID:Time Bracket": False,
+            }
+        }
+        self.jurisdiction_policies: Dict[str, JurisdictionPolicy] = {
+            "US-CA": JurisdictionPolicy("US-CA", "California, USA", True, True, False, 18, "Demo-friendly regulated market."),
+            "US-NY": JurisdictionPolicy("US-NY", "New York, USA", True, True, False, 21, "DFS-style contest framing required."),
+            "US-WA": JurisdictionPolicy("US-WA", "Washington, USA", False, False, True, 21, "Real-money picks blocked."),
+            "US-ID": JurisdictionPolicy("US-ID", "Idaho, USA", False, False, True, 21, "Restricted for paid skill contests."),
+            "CA-ON": JurisdictionPolicy("CA-ON", "Ontario, Canada", True, True, False, 19, "Provincial oversight required."),
+            "IN": JurisdictionPolicy("IN", "India", True, True, False, 18, "Subject to state-by-state treatment."),
+            "BR": JurisdictionPolicy("BR", "Brazil", True, False, False, 18, "Cash-pick structure requires local legal review."),
+            "AE": JurisdictionPolicy("AE", "United Arab Emirates", False, False, True, 21, "Restricted jurisdiction for this product."),
+        }
         
         # Initialize with demo data
         self._init_demo_data()
@@ -701,7 +739,112 @@ class RedlinePlatform:
                 self.current_user = account
                 return True
         return False
+
+    def _policy_for_region(self, region_code: str) -> JurisdictionPolicy:
+        return self.jurisdiction_policies.get(
+            region_code,
+            JurisdictionPolicy(region_code, region_code, False, False, True, 21, "Region not in approved matrix."),
+        )
+
+    def policy_matrix_rows(self) -> List[Dict[str, Any]]:
+        """Structured policy matrix suitable for legal/compliance reviews."""
+        rows: List[Dict[str, Any]] = []
+        for code, policy in sorted(self.jurisdiction_policies.items()):
+            rows.append({
+                "region_code": code,
+                "display_name": policy.display_name,
+                "skill_game_allowed": policy.skill_game_allowed,
+                "dfs_carveout": policy.dfs_carveout,
+                "restricted": policy.restricted,
+                "minimum_age": policy.minimum_age,
+                "notes": policy.notes,
+            })
+        return rows
+
+    def set_pick_type_flag(self, region_code: str, pick_type: PickType, enabled: bool):
+        """Runtime feature flag update for regional pick types (no redeploy)."""
+        self.feature_flags["pick_types_by_region"][f"{region_code}:{pick_type.value}"] = enabled
+
+    def _is_pick_type_enabled(self, region_code: str, pick_type: PickType) -> bool:
+        flags = self.feature_flags["pick_types_by_region"]
+        region_key = f"{region_code}:{pick_type.value}"
+        default_key = f"default:{pick_type.value}"
+        return flags.get(region_key, flags.get(default_key, True))
+
+    def _check_jurisdiction(self, account: Account, action: str, pick_type: Optional[PickType] = None):
+        """Shared geolocation + jurisdiction + KYC gate used by financial endpoints."""
+        policy = self._policy_for_region(account.jurisdiction)
+        if policy.restricted or not policy.skill_game_allowed:
+            raise ValueError(
+                f"{action} blocked in {policy.display_name}. "
+                f"This location is currently restricted for real-money skill picks."
+            )
+        if account.age < policy.minimum_age:
+            raise ValueError(
+                f"{action} blocked: minimum age in {policy.display_name} is {policy.minimum_age}."
+            )
+        if not account.kyc_verified:
+            raise ValueError(f"{action} blocked until KYC is completed.")
+        if pick_type and not self._is_pick_type_enabled(account.jurisdiction, pick_type):
+            raise ValueError(
+                f"{action} blocked: {pick_type.value} picks are disabled in {policy.display_name}."
+            )
+
+    def create_account(
+        self,
+        username: str,
+        email: str,
+        account_type: AccountType,
+        jurisdiction: str,
+        age: int,
+        kyc_verified: bool,
+    ) -> Account:
+        """Account-creation endpoint with geolocation and jurisdiction checks."""
+        policy = self._policy_for_region(jurisdiction)
+        if policy.restricted:
+            raise ValueError(f"Account creation blocked for restricted location: {policy.display_name}.")
+        if age < policy.minimum_age:
+            raise ValueError(f"Account creation blocked: minimum age in {policy.display_name} is {policy.minimum_age}.")
+
+        user_id = f"user_{len(self.accounts) + 1:03d}"
+        wallet = RedlineWallet(f"wallet_{user_id}", user_id, 0.0)
+        account = Account(
+            user_id=user_id,
+            username=username,
+            account_type=account_type,
+            email=email,
+            wallet=wallet,
+            jurisdiction=jurisdiction,
+            age=age,
+            kyc_verified=kyc_verified,
+        )
+        self.accounts[user_id] = account
+        return account
+
+    def deposit(self, account: Account, amount: float):
+        """Deposit endpoint with jurisdiction guardrails."""
+        self._check_jurisdiction(account, "Deposit")
+        if amount <= 0:
+            raise ValueError("Deposit amount must be positive.")
+        account.wallet.add_transaction(amount, "Wallet deposit", "deposit")
+
+    def withdraw(self, account: Account, amount: float):
+        """Withdrawal endpoint with jurisdiction guardrails."""
+        self._check_jurisdiction(account, "Withdrawal")
+        if amount <= 0:
+            raise ValueError("Withdrawal amount must be positive.")
+        if amount > account.wallet.balance:
+            raise ValueError("Insufficient funds for withdrawal.")
+        account.wallet.add_transaction(-amount, "Wallet withdrawal", "withdrawal")
     
+    def onboarding_disclosure(self, account: Account) -> str:
+        policy = self._policy_for_region(account.jurisdiction)
+        return (
+            f"Region: {policy.display_name} | Skill-game allowed: {policy.skill_game_allowed} | "
+            f"DFS carveout: {policy.dfs_carveout} | Restricted: {policy.restricted} | "
+            f"KYC required: True | Minimum age: {policy.minimum_age}+"
+        )
+
     def get_current_user(self) -> Optional[Account]:
         """Get currently logged in user"""
         return self.current_user
@@ -1206,6 +1349,10 @@ class RedlinePlatform:
         if run.picks_locked:
             console.print("[red]Picks are locked for this run.[/red]")
             return
+
+        if not self._is_pick_type_enabled(account.jurisdiction, PickType.WINNER):
+            console.print("[red]Winner picks are currently disabled in your jurisdiction.[/red]")
+            return
         
         console.clear()
         console.print(Panel.fit(f"🎲 Make a Pick: {run.name}", border_style="yellow"))
@@ -1243,6 +1390,12 @@ class RedlinePlatform:
             console.print("[red]Invalid amount.[/red]")
             return
         
+        try:
+            self._check_jurisdiction(account, "Pick placement", PickType.WINNER)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            return
+
         # Create pick
         pick_id = f"pick_{len(self.picks) + 1:03d}"
         odds = run.current_odds.get(selected_jockey, 2.0)
@@ -1271,6 +1424,8 @@ class RedlinePlatform:
         console.print()
         console.print(Panel(
             f"[green]✓ Pick confirmed![/green]\n\n"
+            f"[bold]Regulatory disclosure:[/bold] This is a paid skill contest and may be unavailable in restricted locations.\n"
+            f"You confirm age {account.age}+ and KYC status as verified before settlement.\n\n"
             f"Run: {run.name}\n"
             f"Jockey: {jockey_name}\n"
             f"Amount: ${amount:.2f}\n"
@@ -1563,8 +1718,10 @@ def main_menu(platform: RedlinePlatform):
             user_list = list(platform.accounts.values())
             selected_user = user_list[int(choice) - 1]
             platform.current_user = selected_user
-            
+
             console.print(f"\n[green]✓ Logged in as {selected_user.username}[/green]")
+            console.print(f"[yellow]Disclosure:[/yellow] {platform.onboarding_disclosure(selected_user)}")
+            console.print("[dim]Paid picks are blocked in restricted locations and require KYC before deposit/pick/withdrawal.[/dim]")
             time.sleep(1)
         
         else:
