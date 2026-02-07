@@ -98,6 +98,11 @@ def run_seeded_demo_test() -> None:
     assert "implied_probability" in ghost_confidence
 
 
+def run_complete_test() -> None:
+    """Backward-compatible seeded demo check entrypoint."""
+    run_seeded_demo_test()
+
+
 def main() -> int:
     if not DEMO_FILE.exists():
         print(f"ERROR: Missing demo file at {DEMO_FILE}", file=sys.stderr)
@@ -109,6 +114,9 @@ def main() -> int:
     print("complete_platform_test: PASS")
     print("- redline_complete API flow verified")
     print("- demo seeded users/runs metadata verified")
+    print("- Seeded usernames (MikeTheSpec, Turbo) are valid")
+    print("- Accounts/runs initialized")
+    print("- Ranking confidence and hype metadata initialized")
     return 0
 
 
