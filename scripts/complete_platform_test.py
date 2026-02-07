@@ -12,25 +12,34 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 DEMO_FILE = REPO_ROOT / "redline_demo-sonnet4.5.py"
+COMPLETE_FILE = REPO_ROOT / "redline_complete.py"
 
-from redline_complete import Account, AccountType, RedlinePlatform, RunType
 
-
-def load_demo_module():
-    spec = importlib.util.spec_from_file_location("redline_demo", DEMO_FILE)
+def _load_module(name: str, path: pathlib.Path):
+    spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
-        raise RuntimeError(f"Unable to load module from {DEMO_FILE}")
+        raise RuntimeError(f"Unable to load module from {path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
-def run_complete_platform_api_test() -> None:
-    platform = RedlinePlatform()
+def load_demo_module():
+    return _load_module("redline_demo", DEMO_FILE)
 
-    creator = Account("owner_001", "Owner", AccountType.TEAM_OWNER, wallet_balance=1000.0)
-    jockey = Account("jockey_001", "Turbo", AccountType.JOCKEY, wallet_balance=200.0)
-    spectator = Account("spec_001", "Mike", AccountType.SPECTATOR, wallet_balance=150.0)
+
+def load_complete_module():
+    return _load_module("redline_complete", COMPLETE_FILE)
+
+
+def run_complete_platform_api_test() -> None:
+    complete = load_complete_module()
+    platform = complete.RedlinePlatform()
+
+    creator = complete.Account("owner_001", "Owner", complete.AccountType.TEAM_OWNER, wallet_balance=1000.0)
+    jockey = complete.Account("jockey_001", "Turbo", complete.AccountType.JOCKEY, wallet_balance=200.0)
+    spectator = complete.Account("spec_001", "Mike", complete.AccountType.SPECTATOR, wallet_balance=150.0)
 
     platform.add_account(creator)
     platform.add_account(jockey)
@@ -40,7 +49,7 @@ def run_complete_platform_api_test() -> None:
         creator_id=creator.user_id,
         run_id="run_001",
         name="Friday Night Finals",
-        run_type=RunType.RACE,
+        run_type=complete.RunType.RACE,
         entry_fee=25.0,
         picks_enabled=True,
     )
@@ -109,6 +118,9 @@ def run_complete_test() -> None:
 def main() -> int:
     if not DEMO_FILE.exists():
         print(f"ERROR: Missing demo file at {DEMO_FILE}", file=sys.stderr)
+        return 1
+    if not COMPLETE_FILE.exists():
+        print(f"ERROR: Missing complete file at {COMPLETE_FILE}", file=sys.stderr)
         return 1
 
     run_complete_platform_api_test()
