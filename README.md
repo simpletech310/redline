@@ -47,3 +47,15 @@ Once this passes, start wiring providers in this order:
 2. Stripe Connect + webhook reconciliation
 3. Render API deploy
 4. Vercel web client deploy
+
+## Observability additions
+
+The demo now includes in-memory observability primitives for race/pick/payment flows:
+- Structured JSON logging with `correlation_id` across pick placement, settlement, and payment events.
+- Metrics for pick latency, settlement latency, payout webhook reconciliation latency, payout success rate, dispute rate, and fraud flags.
+- SLO targets:
+  - Result settlement latency: `< 30s` at p95.
+  - Payout webhook reconciliation latency: `< 5 min` at p95.
+- Alert policies + runbooks for payment failures, result lock failures, odds service degradation, and SLO breaches.
+
+You can inspect the current telemetry snapshot via `platform.get_observability_snapshot()` in code or REPL.

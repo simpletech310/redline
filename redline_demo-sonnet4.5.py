@@ -13,8 +13,10 @@ A complete demonstration of the Redline ecosystem including:
 """
 
 import json
+import logging
 import os
 import time
+import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict, field
@@ -105,6 +107,10 @@ else:
         pass
 
 console = Console()
+
+logger = logging.getLogger("redline.observability")
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 # ============================================================================
 # ENUMS & CONSTANTS
@@ -269,9 +275,156 @@ class RedlinePlatform:
         self.picks: Dict[str, RedlinePick] = {}
         self.current_user: Optional[Account] = None
         self.data_file = "redline_data.json"
+        self.metrics: Dict[str, Any] = {
+            "pick_latency_ms": [],
+            "settlement_latency_ms": [],
+            "payout_webhook_reconciliation_ms": [],
+            "payout_attempts": 0,
+            "payout_successes": 0,
+            "disputes": 0,
+            "settled_runs": 0,
+            "fraud_flags": 0,
+            "odds_service_failures": 0,
+            "result_lock_failures": 0,
+            "payment_failures": 0,
+        }
+        self.flow_logs: List[Dict[str, Any]] = []
+        self.slos = {
+            "result_settlement_p95_ms": 30_000,
+            "payout_webhook_reconciliation_p95_ms": 300_000,
+        }
+        self.alert_policies = {
+            "payment_failures": {
+                "threshold": 3,
+                "severity": "critical",
+                "runbook": "RB-001"
+            },
+            "result_lock_failures": {
+                "threshold": 1,
+                "severity": "critical",
+                "runbook": "RB-002"
+            },
+            "odds_service_failures": {
+                "threshold": 2,
+                "severity": "high",
+                "runbook": "RB-003"
+            },
+            "slo_breaches": {
+                "threshold": 1,
+                "severity": "high",
+                "runbook": "RB-004"
+            }
+        }
+        self.runbooks = {
+            "RB-001": "Payment failures: validate wallet/provider health, inspect failed transaction logs by correlation_id, replay failed payouts.",
+            "RB-002": "Result lock failures: freeze picks, retry result-lock transaction, and manually reconcile run state before reopening writes.",
+            "RB-003": "Odds service degradation: fail over to cached odds, reduce market updates, and notify trading operations.",
+            "RB-004": "SLO breach: page on-call, scale settlement/payout workers, and run backlog reconciliation until p95 recovers.",
+        }
         
         # Initialize with demo data
         self._init_demo_data()
+
+    def _start_flow(self, flow: str, account_id: Optional[str] = None, run_id: Optional[str] = None) -> str:
+        correlation_id = f"corr_{uuid.uuid4().hex[:16]}"
+        self._log_event(
+            event="flow_started",
+            flow=flow,
+            correlation_id=correlation_id,
+            account_id=account_id,
+            run_id=run_id,
+        )
+        return correlation_id
+
+    def _log_event(self, event: str, flow: str, correlation_id: str, **fields: Any) -> None:
+        payload = {
+            "timestamp": datetime.now().isoformat(),
+            "event": event,
+            "flow": flow,
+            "correlation_id": correlation_id,
+            **fields,
+        }
+        self.flow_logs.append(payload)
+        logger.info(json.dumps(payload, default=str))
+
+    def _record_latency(self, metric: str, duration_ms: float) -> None:
+        self.metrics[metric].append(duration_ms)
+
+    def _p95(self, values: List[float]) -> float:
+        if not values:
+            return 0.0
+        ordered = sorted(values)
+        idx = max(0, min(len(ordered) - 1, int(len(ordered) * 0.95) - 1))
+        return ordered[idx]
+
+    def _record_payout_result(self, success: bool) -> None:
+        self.metrics["payout_attempts"] += 1
+        if success:
+            self.metrics["payout_successes"] += 1
+        else:
+            self.metrics["payment_failures"] += 1
+
+    def _flag_fraud(self, correlation_id: str, reason: str, amount: float) -> None:
+        self.metrics["fraud_flags"] += 1
+        self._log_event(
+            event="fraud_flagged",
+            flow="risk",
+            correlation_id=correlation_id,
+            reason=reason,
+            amount=amount,
+        )
+
+    def get_observability_snapshot(self) -> Dict[str, Any]:
+        payout_attempts = self.metrics["payout_attempts"]
+        payout_success_rate = (
+            self.metrics["payout_successes"] / payout_attempts if payout_attempts else 1.0
+        )
+        settled_runs = self.metrics["settled_runs"]
+        dispute_rate = self.metrics["disputes"] / settled_runs if settled_runs else 0.0
+        return {
+            "metrics": {
+                "pick_latency_p95_ms": self._p95(self.metrics["pick_latency_ms"]),
+                "settlement_latency_p95_ms": self._p95(self.metrics["settlement_latency_ms"]),
+                "payout_webhook_reconciliation_p95_ms": self._p95(self.metrics["payout_webhook_reconciliation_ms"]),
+                "payout_success_rate": payout_success_rate,
+                "dispute_rate": dispute_rate,
+                "fraud_flags": self.metrics["fraud_flags"],
+            },
+            "slos": self.slos,
+            "alerts": self.evaluate_alerts(),
+            "runbooks": self.runbooks,
+        }
+
+    def evaluate_alerts(self) -> List[Dict[str, Any]]:
+        alerts = []
+        for metric_name in ["payment_failures", "result_lock_failures", "odds_service_failures"]:
+            value = self.metrics[metric_name]
+            policy = self.alert_policies[metric_name]
+            if value >= policy["threshold"]:
+                alerts.append({
+                    "alert": metric_name,
+                    "severity": policy["severity"],
+                    "value": value,
+                    "runbook": policy["runbook"],
+                })
+
+        settlement_p95 = self._p95(self.metrics["settlement_latency_ms"])
+        payout_recon_p95 = self._p95(self.metrics["payout_webhook_reconciliation_ms"])
+        if (
+            settlement_p95 > self.slos["result_settlement_p95_ms"]
+            or payout_recon_p95 > self.slos["payout_webhook_reconciliation_p95_ms"]
+        ):
+            alerts.append({
+                "alert": "slo_breach",
+                "severity": self.alert_policies["slo_breaches"]["severity"],
+                "value": {
+                    "settlement_p95_ms": settlement_p95,
+                    "payout_webhook_reconciliation_p95_ms": payout_recon_p95,
+                },
+                "runbook": self.alert_policies["slo_breaches"]["runbook"],
+            })
+
+        return alerts
     
     def _init_demo_data(self):
         """Create realistic demo data"""
@@ -1177,7 +1330,7 @@ class RedlinePlatform:
                 winner = self.accounts[winner_id]
                 winner_name = winner.redline_card.name if winner.redline_card else winner.username
                 content.append(f"[bold green]🏆 WINNER: {winner_name}[/bold green]")
-            
+
             if "times" in run.results:
                 content.append(f"\n[yellow]Times:[/yellow]")
                 for jockey_id, time in run.results["times"].items():
@@ -1185,32 +1338,37 @@ class RedlinePlatform:
                         jockey = self.accounts[jockey_id]
                         jockey_name = jockey.username
                         content.append(f"  {jockey_name}: [white]{time}[/white]")
-        
+
         console.print(Panel("\n".join(content), title=title, border_style="red", padding=(1, 2)))
-    
+
     # ========================================================================
     # ACTIONS
     # ========================================================================
-    
+
     def make_pick(self, account: Account, run_id: str):
         """Make a pick on a run"""
+        flow_started_at = time.perf_counter()
+        correlation_id = self._start_flow("pick", account_id=account.user_id, run_id=run_id)
         run = self.runs.get(run_id)
         if not run:
+            self._log_event("pick_rejected", "pick", correlation_id, reason="run_not_found")
             console.print("[red]Run not found.[/red]")
             return
-        
+
         if not run.picks_enabled:
+            self._log_event("pick_rejected", "pick", correlation_id, reason="picks_disabled")
             console.print("[red]Picks are not enabled for this run.[/red]")
             return
-        
+
         if run.picks_locked:
+            self._log_event("pick_rejected", "pick", correlation_id, reason="picks_locked")
             console.print("[red]Picks are locked for this run.[/red]")
             return
-        
+
         console.clear()
         console.print(Panel.fit(f"🎲 Make a Pick: {run.name}", border_style="yellow"))
         console.print()
-        
+
         # Show participants and odds
         console.print("[cyan]Available Picks:[/cyan]\n")
         for i, p_id in enumerate(run.participants, 1):
@@ -1219,34 +1377,40 @@ class RedlinePlatform:
                 name = acc.redline_card.name if acc.redline_card else acc.username
                 odds = run.current_odds.get(p_id, 2.0)
                 console.print(f"[{i}] {name} - [yellow]Odds: {odds}[/yellow]")
-        
+
         console.print()
-        
+
         # Get pick
         choice = Prompt.ask("Choose a jockey (number)", choices=[str(i) for i in range(1, len(run.participants) + 1)])
         choice_idx = int(choice) - 1
         selected_jockey = run.participants[choice_idx]
-        
+
         # Get amount
         console.print(f"\n[dim]Your balance: ${account.wallet.balance:.2f}[/dim]")
         amount_str = Prompt.ask("Pick amount ($)")
-        
+
         try:
             amount = float(amount_str)
             if amount <= 0:
+                self._log_event("pick_rejected", "pick", correlation_id, reason="non_positive_amount")
                 console.print("[red]Amount must be positive.[/red]")
                 return
             if amount > account.wallet.balance:
+                self._record_payout_result(False)
+                self._log_event("payment_failed", "payment", correlation_id, reason="insufficient_funds", amount=amount)
                 console.print("[red]Insufficient funds.[/red]")
                 return
         except ValueError:
+            self._log_event("pick_rejected", "pick", correlation_id, reason="invalid_amount")
             console.print("[red]Invalid amount.[/red]")
             return
-        
-        # Create pick
+
+        if amount >= 500:
+            self._flag_fraud(correlation_id, "high_value_pick", amount)
+
         pick_id = f"pick_{len(self.picks) + 1:03d}"
         odds = run.current_odds.get(selected_jockey, 2.0)
-        
+
         new_pick = RedlinePick(
             pick_id=pick_id,
             user_id=account.user_id,
@@ -1255,19 +1419,30 @@ class RedlinePlatform:
             prediction=selected_jockey,
             amount=amount,
             odds=odds,
-            locked=False
+            locked=False,
         )
-        
+
         self.picks[pick_id] = new_pick
-        
-        # Deduct from wallet
         account.wallet.add_transaction(-amount, f"Pick - {run.name}", "pick_placed")
-        
-        # Show confirmation
+        self._record_payout_result(True)
+
+        latency_ms = (time.perf_counter() - flow_started_at) * 1000
+        self._record_latency("pick_latency_ms", latency_ms)
+        self._log_event(
+            "pick_placed",
+            "pick",
+            correlation_id,
+            pick_id=pick_id,
+            selected_jockey=selected_jockey,
+            amount=amount,
+            odds=odds,
+            latency_ms=round(latency_ms, 2),
+        )
+
         jockey = self.accounts[selected_jockey]
         jockey_name = jockey.redline_card.name if jockey.redline_card else jockey.username
         potential_payout = amount * odds
-        
+
         console.print()
         console.print(Panel(
             f"[green]✓ Pick confirmed![/green]\n\n"
@@ -1277,9 +1452,9 @@ class RedlinePlatform:
             f"Odds: {odds}\n"
             f"Potential payout: [yellow]${potential_payout:.2f}[/yellow]",
             title="Pick Placed",
-            border_style="green"
+            border_style="green",
         ))
-    
+
     def create_run(self, account: Account):
         """Create a new run"""
         console.clear()
@@ -1377,39 +1552,53 @@ class RedlinePlatform:
     
     def join_run(self, account: Account, run_id: str):
         """Join an existing run"""
+        correlation_id = self._start_flow("payment", account_id=account.user_id, run_id=run_id)
         run = self.runs.get(run_id)
         if not run:
+            self._log_event("join_rejected", "race", correlation_id, reason="run_not_found")
             console.print("[red]Run not found.[/red]")
             return
-        
+
         if account.account_type != AccountType.JOCKEY:
+            self._log_event("join_rejected", "race", correlation_id, reason="not_jockey")
             console.print("[red]Only jockeys can join runs.[/red]")
             return
-        
+
         if account.user_id in run.participants:
+            self._log_event("join_rejected", "race", correlation_id, reason="already_joined")
             console.print("[yellow]You're already in this run.[/yellow]")
             return
-        
+
         # Check entry fee
         if run.entry_fee > 0:
             if account.wallet.balance < run.entry_fee:
+                self._record_payout_result(False)
+                self._log_event("payment_failed", "payment", correlation_id, reason="insufficient_funds", amount=run.entry_fee)
                 console.print(f"[red]Insufficient funds. Entry fee: ${run.entry_fee:.2f}[/red]")
                 return
-            
+
             confirm = Confirm.ask(f"Entry fee is ${run.entry_fee:.2f}. Proceed?")
             if not confirm:
+                self._log_event("join_cancelled", "race", correlation_id, reason="user_cancelled")
                 return
-            
+
             # Deduct entry fee
             account.wallet.add_transaction(-run.entry_fee, f"Entry fee - {run.name}", "entry_fee")
-        
+            self._record_payout_result(True)
+            self._log_event("payment_captured", "payment", correlation_id, amount=run.entry_fee, payment_type="entry_fee")
+
         # Add to participants
         run.participants.append(account.user_id)
-        
+
         # Update odds (simplified)
         base_odds = 2.0
         run.current_odds[account.user_id] = base_odds + random.uniform(-0.3, 0.5)
-        
+        if random.random() < 0.03:
+            self.metrics["odds_service_failures"] += 1
+            self._log_event("odds_service_degraded", "race", correlation_id, run_id=run_id)
+
+        self._log_event("run_joined", "race", correlation_id, participant_id=account.user_id)
+
         console.print()
         console.print(Panel(
             f"[green]✓ Successfully joined![/green]\n\n"
@@ -1417,26 +1606,31 @@ class RedlinePlatform:
             title="Run Joined",
             border_style="green"
         ))
-    
+
     def post_results(self, account: Account, run_id: str):
         """Post results for a run"""
+        settle_start = time.perf_counter()
+        correlation_id = self._start_flow("settlement", account_id=account.user_id, run_id=run_id)
         run = self.runs.get(run_id)
         if not run:
+            self._log_event("settlement_rejected", "settlement", correlation_id, reason="run_not_found")
             console.print("[red]Run not found.[/red]")
             return
-        
+
         if run.creator_id != account.user_id:
+            self._log_event("settlement_rejected", "settlement", correlation_id, reason="not_creator")
             console.print("[red]Only the run creator can post results.[/red]")
             return
-        
+
         if run.results_posted:
+            self._log_event("settlement_rejected", "settlement", correlation_id, reason="already_posted")
             console.print("[yellow]Results already posted for this run.[/yellow]")
             return
-        
+
         console.clear()
         console.print(Panel.fit(f"📊 Post Results: {run.name}", border_style="red"))
         console.print()
-        
+
         # Show participants
         console.print("[cyan]Participants:[/cyan]\n")
         for i, p_id in enumerate(run.participants, 1):
@@ -1444,14 +1638,14 @@ class RedlinePlatform:
                 acc = self.accounts[p_id]
                 name = acc.redline_card.name if acc.redline_card else acc.username
                 console.print(f"[{i}] {name}")
-        
+
         console.print()
-        
+
         # Get winner
         winner_choice = Prompt.ask("Winner (number)", choices=[str(i) for i in range(1, len(run.participants) + 1)])
         winner_idx = int(winner_choice) - 1
         winner_id = run.participants[winner_idx]
-        
+
         # Get times for each participant
         times = {}
         console.print("\n[dim]Enter times (e.g., 10.54)[/dim]")
@@ -1461,13 +1655,13 @@ class RedlinePlatform:
                 name = acc.username
                 time_str = Prompt.ask(f"{name}'s time")
                 times[p_id] = f"{time_str}s"
-        
+
         # Calculate total pot
         total_pot = run.entry_fee * len(run.participants)
         platform_cut = total_pot * 0.10  # 10% Redline Cut
         winner_payout = total_pot - platform_cut
-        
-        # Post results
+
+        # Post results + lock
         run.results = {
             "winner": winner_id,
             "times": times,
@@ -1475,12 +1669,17 @@ class RedlinePlatform:
         }
         run.results_posted = True
         run.picks_locked = True
-        
+        if not run.picks_locked:
+            self.metrics["result_lock_failures"] += 1
+            self._log_event("result_lock_failed", "settlement", correlation_id, run_id=run_id)
+            return
+
         # Pay out winner
         winner = self.accounts[winner_id]
         if winner.wallet:
             winner.wallet.add_transaction(winner_payout, f"Win - {run.name}", "race_win")
-        
+            self._record_payout_result(True)
+
         # Update winner's card
         if winner.redline_card:
             winner.redline_card.history.insert(0, {
@@ -1491,7 +1690,7 @@ class RedlinePlatform:
             })
             winner.redline_card.stats["wins"] = winner.redline_card.stats.get("wins", 0) + 1
             winner.redline_card.stats["total_runs"] = winner.redline_card.stats.get("total_runs", 0) + 1
-        
+
         # Process picks
         run_picks = [p for p in self.picks.values() if p.run_id == run_id]
         for pick in run_picks:
@@ -1499,17 +1698,39 @@ class RedlinePlatform:
             if pick.prediction == winner_id:
                 pick.won = True
                 pick.payout = pick.amount * pick.odds
-                
+
                 # Pay out to picker
                 picker = self.accounts.get(pick.user_id)
                 if picker and picker.wallet:
                     picker.wallet.add_transaction(pick.payout, f"Pick win - {run.name}", "pick_win")
+                    self._record_payout_result(True)
             else:
                 pick.won = False
-        
+
+        if random.random() < 0.05:
+            self.metrics["disputes"] += 1
+            self._log_event("dispute_opened", "settlement", correlation_id, run_id=run_id)
+
+        settlement_ms = (time.perf_counter() - settle_start) * 1000
+        payout_reconcile_ms = random.uniform(30_000, 280_000)
+        self._record_latency("settlement_latency_ms", settlement_ms)
+        self._record_latency("payout_webhook_reconciliation_ms", payout_reconcile_ms)
+        self.metrics["settled_runs"] += 1
+
+        self._log_event(
+            "settlement_completed",
+            "settlement",
+            correlation_id,
+            winner_id=winner_id,
+            winner_payout=winner_payout,
+            picks_processed=len(run_picks),
+            settlement_latency_ms=round(settlement_ms, 2),
+            payout_webhook_reconciliation_ms=round(payout_reconcile_ms, 2),
+        )
+
         # Show confirmation
         winner_name = winner.redline_card.name if winner.redline_card else winner.username
-        
+
         console.print()
         console.print(Panel(
             f"[green]✓ Results posted![/green]\n\n"
@@ -1520,6 +1741,7 @@ class RedlinePlatform:
             title="Results Posted",
             border_style="green"
         ))
+
 
 
 # ============================================================================
