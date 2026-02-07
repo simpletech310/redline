@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run complete local MVP checks for both demo seed data and complete platform API."""
+"""Run a complete local MVP test of the Redline demo platform."""
 
 from __future__ import annotations
 
@@ -70,10 +70,11 @@ def run_complete_platform_api_test() -> None:
     assert spectator_summary["pick_earnings"] > 0
 
 
-def run_seeded_demo_test() -> None:
+def run_complete_test() -> None:
     demo = load_demo_module()
     platform = demo.RedlinePlatform()
 
+    # Seeded username checks
     assert platform.login("MikeTheSpec"), "Expected seeded spectator username to log in"
     mike = platform.get_current_user()
     assert mike is not None and mike.user_id == "spec_mike"
@@ -83,6 +84,7 @@ def run_seeded_demo_test() -> None:
     turbo = platform.get_current_user()
     assert turbo is not None and turbo.user_id == "jockey_turbo"
 
+    # Core seeded objects
     assert len(platform.accounts) >= 7, "Expected demo accounts to be seeded"
     assert "run_001" in platform.runs, "Expected base run seed run_001"
 
@@ -90,6 +92,7 @@ def run_seeded_demo_test() -> None:
     assert run.picks_enabled is True
     assert run.current_odds.get("jockey_ghost") is not None
 
+    # Ranking-confidence/hype metadata seeds should be available
     assert run.confidence_by_participant, "Expected confidence metadata for participants"
     assert run.hype_objects, "Expected hype objects to be attached to runs"
 
@@ -97,10 +100,10 @@ def run_seeded_demo_test() -> None:
     assert "sample_size" in ghost_confidence
     assert "implied_probability" in ghost_confidence
 
-
-def run_complete_test() -> None:
-    """Backward-compatible seeded demo check entrypoint."""
-    run_seeded_demo_test()
+    print("Complete MVP test passed.")
+    print("- Seeded usernames (MikeTheSpec, Turbo) are valid")
+    print("- Accounts/runs initialized")
+    print("- Ranking confidence and hype metadata initialized")
 
 
 def main() -> int:
@@ -109,14 +112,11 @@ def main() -> int:
         return 1
 
     run_complete_platform_api_test()
-    run_seeded_demo_test()
+    run_complete_test()
 
     print("complete_platform_test: PASS")
     print("- redline_complete API flow verified")
     print("- demo seeded users/runs metadata verified")
-    print("- Seeded usernames (MikeTheSpec, Turbo) are valid")
-    print("- Accounts/runs initialized")
-    print("- Ranking confidence and hype metadata initialized")
     return 0
 
 
