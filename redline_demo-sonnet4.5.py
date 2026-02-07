@@ -156,6 +156,7 @@ class RedlineCard:
     classes: List[str]
     stats: Dict[str, Any]
     history: List[Dict[str, Any]]
+    confidence_metadata: Dict[str, Any] = field(default_factory=dict)
     trust_score: float = 100.0
     verified: bool = False
     created_at: str = ""
@@ -242,6 +243,8 @@ class RedlineRun:
     results_posted: bool = False
     results: Dict[str, Any] = field(default_factory=dict)
     current_odds: Dict[str, float] = field(default_factory=dict)
+    confidence_by_participant: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    hype_objects: List[Dict[str, str]] = field(default_factory=list)
 
 @dataclass
 class Account:
@@ -255,6 +258,10 @@ class Account:
     wallet: Optional[RedlineWallet] = None
     team_members: List[str] = field(default_factory=list)  # For team owners
     team_owner_id: Optional[str] = None  # For jockeys on a team
+    following_racers: List[str] = field(default_factory=list)
+    following_teams: List[str] = field(default_factory=list)
+    following_locations: List[str] = field(default_factory=list)
+    notification_subscriptions: List[str] = field(default_factory=list)
 
 # ============================================================================
 # REDLINE PLATFORM - MAIN ENGINE
@@ -689,7 +696,91 @@ class RedlinePlatform:
         
         # Add winning transaction to spectator wallet
         spec1_wallet.add_transaction(165.00, "Win payout - Christmas Eve Grudge Match", "pick_win")
-    
+
+        # Confidence + social graph + ranking intelligence seeds
+        self._initialize_card_confidence_metadata()
+        self._initialize_follow_graph_and_notifications()
+        self._initialize_run_intelligence()
+
+    def _initialize_card_confidence_metadata(self):
+        """Attach confidence metadata to every card for pick quality context."""
+        for account in self.accounts.values():
+            if not account.redline_card:
+                continue
+            stats = account.redline_card.stats
+            sample_size = stats.get("total_runs") or stats.get("total_events") or 0
+            wins = stats.get("wins") or stats.get("team_wins") or 0
+            trend = "Rising" if account.redline_card.trust_score >= 98 else "Stable" if account.redline_card.trust_score >= 94 else "Volatile"
+            account.redline_card.confidence_metadata = {
+                "sample_size": int(sample_size) if str(sample_size).isdigit() else sample_size,
+                "last_10_form": f"{min(int(wins), 8)} wins / 10" if str(wins).isdigit() else "6 wins / 10",
+                "trust_trend": trend,
+            }
+
+    def _initialize_follow_graph_and_notifications(self):
+        """Seed follow graph (racers, teams, locations) and notification subscriptions."""
+        for account in self.accounts.values():
+            account.notification_subscriptions = ["live_soon", "trust_alerts", "hype_cards"]
+
+        mike = self.accounts.get("spec_mike")
+        sarah = self.accounts.get("spec_sarah")
+        if mike:
+            mike.following_racers = ["jockey_ghost", "jockey_nitro"]
+            mike.following_teams = ["owner_king"]
+            mike.following_locations = ["Terminal Island", "Long Beach Port District"]
+        if sarah:
+            sarah.following_racers = ["jockey_apex", "jockey_turbo", "jockey_nitro"]
+            sarah.following_teams = ["owner_king"]
+            sarah.following_locations = ["Irwindale Speedway", "Terminal Island"]
+
+    def _build_confidence_for_run_participant(self, participant_id: str, odds: float) -> Dict[str, Any]:
+        account = self.accounts.get(participant_id)
+        if not account or not account.redline_card:
+            return {"sample_size": "N/A", "last_10_form": "N/A", "trust_trend": "Unknown"}
+        metadata = account.redline_card.confidence_metadata or {}
+        enriched = dict(metadata)
+        enriched["implied_probability"] = f"{(1 / max(odds, 1.01)) * 100:.1f}%"
+        return enriched
+
+    def _build_hype_objects(self, run: RedlineRun) -> List[Dict[str, str]]:
+        """Create pre-race hype objects for run cards."""
+        objects: List[Dict[str, str]] = []
+        if run.participants:
+            lead_id = run.participants[0]
+            lead_name = self.accounts.get(lead_id).username if self.accounts.get(lead_id) else lead_id
+            objects.append({"type": "callout", "title": "Callout", "body": f"{lead_name} promised a statement launch in {run.location}."})
+
+        if len(run.participants) >= 2:
+            first = self.accounts.get(run.participants[0])
+            second = self.accounts.get(run.participants[1])
+            first_name = first.username if first else run.participants[0]
+            second_name = second.username if second else run.participants[1]
+            objects.append({"type": "rivalry", "title": "Rivalry", "body": f"{first_name} vs {second_name} has become the most watched matchup this week."})
+
+        if run.participants:
+            hot_id = max(
+                run.participants,
+                key=lambda pid: (self.accounts.get(pid).redline_card.trust_score if self.accounts.get(pid) and self.accounts.get(pid).redline_card else 0),
+            )
+            hot_account = self.accounts.get(hot_id)
+            hot_name = hot_account.username if hot_account else hot_id
+            form = hot_account.redline_card.confidence_metadata.get("last_10_form", "7 wins / 10") if hot_account and hot_account.redline_card else "7 wins / 10"
+            objects.append({"type": "streak", "title": "Streak Card", "body": f"{hot_name} enters with {form} and a high-trust trend."})
+
+        pot = run.entry_fee * len(run.participants)
+        projected = pot * 0.90
+        objects.append({"type": "projected_earnings", "title": "Projected Earnings", "body": f"Winner projection: ${projected:,.0f} after platform fee."})
+        return objects
+
+    def _initialize_run_intelligence(self):
+        """Attach ranking-feed and hype metadata to every run."""
+        for run in self.runs.values():
+            run.confidence_by_participant = {
+                pid: self._build_confidence_for_run_participant(pid, run.current_odds.get(pid, 2.0))
+                for pid in run.participants
+            }
+            run.hype_objects = self._build_hype_objects(run)
+
     # ========================================================================
     # USER MANAGEMENT
     # ========================================================================
@@ -736,6 +827,11 @@ class RedlinePlatform:
         # Trust Score
         trust_color = "green" if card.trust_score >= 95 else "yellow" if card.trust_score >= 85 else "red"
         panel_content.append(f"\n[{trust_color}]Redline Trust: {card.trust_score:.1f}/100[/{trust_color}]")
+        confidence = card.confidence_metadata or {}
+        panel_content.append("\n[magenta]═══ PICK CONFIDENCE METADATA ═══[/magenta]")
+        panel_content.append(f"  Sample Size: [white]{confidence.get('sample_size', 'N/A')}[/white]")
+        panel_content.append(f"  Last-10 Form: [white]{confidence.get('last_10_form', 'N/A')}[/white]")
+        panel_content.append(f"  Trust Trend: [white]{confidence.get('trust_trend', 'N/A')}[/white]")
         
         # Recent History
         if card.history:
@@ -765,6 +861,13 @@ class RedlinePlatform:
         if not upcoming_runs:
             console.print("[yellow]No upcoming runs scheduled.[/yellow]")
             return
+
+        ranking_sections = self._build_ranking_feed_sections(upcoming_runs)
+        console.print("[cyan]═══ RANKING FEED SECTIONS ═══[/cyan]")
+        for section_name, section_runs in ranking_sections.items():
+            ids = ", ".join(run.run_id for run in section_runs[:3]) if section_runs else "None"
+            console.print(f"• [bold]{section_name}[/bold]: [dim]{ids}[/dim]")
+        console.print()
         
         # Sort by date
         upcoming_runs.sort(key=lambda r: r.date_time)
@@ -772,6 +875,34 @@ class RedlinePlatform:
         for run in upcoming_runs:
             self._display_run_summary(run)
             console.print()
+
+    def _build_ranking_feed_sections(self, upcoming_runs: List[RedlineRun]) -> Dict[str, List[RedlineRun]]:
+        """Construct ranking-feed sections for discovery and pick velocity."""
+        now = datetime.now()
+        live_soon = sorted(upcoming_runs, key=lambda r: datetime.fromisoformat(r.date_time) - now)
+        high_pick_volume = sorted(
+            upcoming_runs,
+            key=lambda r: len([p for p in self.picks.values() if p.run_id == r.run_id]),
+            reverse=True,
+        )
+        top_trust = sorted(
+            upcoming_runs,
+            key=lambda r: max(
+                [self.accounts[p].redline_card.trust_score for p in r.participants if p in self.accounts and self.accounts[p].redline_card] or [0]
+            ),
+            reverse=True,
+        )
+        underdog = sorted(
+            [r for r in upcoming_runs if any(odds >= 2.2 for odds in r.current_odds.values())],
+            key=lambda r: max(r.current_odds.values()) if r.current_odds else 0,
+            reverse=True,
+        )
+        return {
+            "Live Soon": live_soon,
+            "High Pick Volume": high_pick_volume,
+            "Top Trust Racers": top_trust,
+            "Underdog Opportunities": underdog,
+        }
     
     def _display_run_summary(self, run: RedlineRun):
         """Display a single run summary"""
@@ -800,6 +931,13 @@ class RedlinePlatform:
                 participant_names.append(name)
         
         content.append(f"\n[cyan]Jockeys:[/cyan] {', '.join(participant_names)}")
+        content.append("\n[magenta]Confidence Metadata[/magenta]")
+        for p_id in run.participants:
+            acc = self.accounts.get(p_id)
+            if not acc:
+                continue
+            confidence = run.confidence_by_participant.get(p_id, {})
+            content.append(f"  {acc.username}: sample {confidence.get('sample_size', 'N/A')} | last-10 {confidence.get('last_10_form', 'N/A')} | trend {confidence.get('trust_trend', 'N/A')}")
         
         # Entry & Access
         if run.entry_fee > 0:
@@ -815,8 +953,14 @@ class RedlinePlatform:
                 if participant_id in self.accounts:
                     acc = self.accounts[participant_id]
                     name = acc.username
-                    content.append(f"  {name}: [yellow]{odds}[/yellow]")
+                    implied = run.confidence_by_participant.get(participant_id, {}).get("implied_probability", "N/A")
+                    content.append(f"  {name}: [yellow]{odds}[/yellow] ([dim]{implied} implied[/dim])")
         
+        if run.hype_objects:
+            content.append(f"\n[cyan]═══ PRE-RACE HYPE ═══[/cyan]")
+            for obj in run.hype_objects:
+                content.append(f"  • [bold]{obj.get('title', 'Hype')}:[/bold] {obj.get('body', '')}")
+
         border_color = "green" if run.picks_enabled else "blue"
         console.print(Panel("\n".join(content), border_style=border_color, padding=(1, 2)))
     
@@ -1150,8 +1294,13 @@ class RedlinePlatform:
                     name = acc.redline_card.name
                     win_rate = acc.redline_card.stats.get("win_rate", "N/A")
                     best_time = acc.redline_card.stats.get("best_time", "N/A")
+                    conf = acc.redline_card.confidence_metadata or {}
                     content.append(f"\n  [white]{name}[/white]")
                     content.append(f"    Win Rate: [green]{win_rate}[/green] | Best Time: [yellow]{best_time}[/yellow]")
+                    content.append(
+                        f"    Confidence: sample {conf.get('sample_size', 'N/A')} | "
+                        f"last-10 {conf.get('last_10_form', 'N/A')} | trend {conf.get('trust_trend', 'N/A')}"
+                    )
         
         # Financial details
         content.append(f"\n[cyan]═══ DETAILS ═══[/cyan]")
@@ -1188,6 +1337,30 @@ class RedlinePlatform:
         
         console.print(Panel("\n".join(content), title=title, border_style="red", padding=(1, 2)))
     
+    def show_follow_graph(self, account: Account):
+        """Display follows for racers, teams, and locations."""
+        console.clear()
+        console.print(Panel.fit("🔗 [bold red]FOLLOW GRAPH[/bold red]", border_style="red"))
+        console.print()
+
+        racer_names = [self.accounts[r].username for r in account.following_racers if r in self.accounts]
+        team_names = [self.accounts[t].redline_card.name if t in self.accounts and self.accounts[t].redline_card else t for t in account.following_teams]
+
+        console.print(f"[cyan]Racers:[/cyan] {', '.join(racer_names) if racer_names else 'None followed'}")
+        console.print(f"[cyan]Teams:[/cyan] {', '.join(team_names) if team_names else 'None followed'}")
+        console.print(f"[cyan]Locations:[/cyan] {', '.join(account.following_locations) if account.following_locations else 'None followed'}")
+
+    def show_notification_subscriptions(self, account: Account):
+        """Display notification subscriptions."""
+        console.clear()
+        console.print(Panel.fit("🔔 [bold red]NOTIFICATION SUBSCRIPTIONS[/bold red]", border_style="red"))
+        console.print()
+        if not account.notification_subscriptions:
+            console.print("[yellow]No active subscriptions.[/yellow]")
+            return
+        for sub in account.notification_subscriptions:
+            console.print(f"• [green]{sub}[/green]")
+
     # ========================================================================
     # ACTIONS
     # ========================================================================
@@ -1603,6 +1776,8 @@ def main_menu(platform: RedlinePlatform):
                 menu_options["7"] = "✅ Post Results"
             
             menu_options["9"] = "💵 Wallet"
+            menu_options["10"] = "🔗 Follow Graph"
+            menu_options["11"] = "🔔 Notification Subscriptions"
             menu_options["0"] = "🚪 Logout"
             
             for key, value in menu_options.items():
@@ -1728,6 +1903,14 @@ def main_menu(platform: RedlinePlatform):
             elif choice == "9":
                 # Wallet
                 platform.show_wallet(user)
+                clear_and_wait()
+
+            elif choice == "10":
+                platform.show_follow_graph(user)
+                clear_and_wait()
+
+            elif choice == "11":
+                platform.show_notification_subscriptions(user)
                 clear_and_wait()
 
 
