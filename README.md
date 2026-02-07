@@ -47,3 +47,25 @@ Once this passes, start wiring providers in this order:
 2. Stripe Connect + webhook reconciliation
 3. Render API deploy
 4. Vercel web client deploy
+
+## Product rollout plan
+
+### Phase 1: City pilot
+- Focus on a verified jockey cohort and a controlled spectator pool.
+- Offer race-only markets while operations and compliance playbooks are validated.
+
+### Phase 2: Tournament + premium expansion
+- Introduce team-owner tournaments once event operations are stable.
+- Launch premium access tiers (VIP/Pit) after race-day reliability targets are met.
+
+### Phase 3: Creator ecosystem scale-out
+- Expand into team sponsorship pages.
+- Add branded tournaments and partner venue activations.
+
+## North-star metrics
+
+Track these metrics weekly to guide go/no-go decisions by phase:
+- Weekly active racers.
+- Pick liquidity per event.
+- Settlement trust score.
+- Repeat race participation.
