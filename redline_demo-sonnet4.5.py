@@ -15,11 +15,15 @@ A complete demonstration of the Redline ecosystem including:
 import json
 import os
 import time
+import uuid
+import hmac
+import hashlib
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict, field
 from enum import Enum
 import random
+from collections import deque
 
 # Rich library for enhanced terminal output (with offline-safe fallback)
 import importlib.util
@@ -256,6 +260,40 @@ class Account:
     team_members: List[str] = field(default_factory=list)  # For team owners
     team_owner_id: Optional[str] = None  # For jockeys on a team
 
+
+@dataclass
+class StripeProfile:
+    account_id: str
+    connect_account_id: Optional[str] = None
+    onboarding_complete: bool = False
+    customer_id: Optional[str] = None
+    payment_method_ids: List[str] = field(default_factory=list)
+
+
+class StripeGateway:
+    """Offline-safe Stripe Connect and customer payment method abstraction."""
+
+    def __init__(self):
+        self.webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "local-demo-webhook-secret")
+        self.connect_accounts: Dict[str, str] = {}
+        self.customers: Dict[str, str] = {}
+
+    def start_connect_onboarding(self, account: Account) -> Dict[str, str]:
+        connect_id = self.connect_accounts.get(account.user_id) or f"acct_{uuid.uuid4().hex[:12]}"
+        self.connect_accounts[account.user_id] = connect_id
+        return {
+            "connect_account_id": connect_id,
+            "onboarding_url": f"https://connect.stripe.com/setup/s/{connect_id}",
+        }
+
+    def attach_customer_payment_method(self, account: Account, payment_method_token: str) -> Dict[str, str]:
+        customer_id = self.customers.get(account.user_id) or f"cus_{uuid.uuid4().hex[:12]}"
+        self.customers[account.user_id] = customer_id
+        return {
+            "customer_id": customer_id,
+            "payment_method_id": f"pm_{hashlib.sha256(payment_method_token.encode()).hexdigest()[:16]}",
+        }
+
 # ============================================================================
 # REDLINE PLATFORM - MAIN ENGINE
 # ============================================================================
@@ -267,11 +305,135 @@ class RedlinePlatform:
         self.accounts: Dict[str, Account] = {}
         self.runs: Dict[str, RedlineRun] = {}
         self.picks: Dict[str, RedlinePick] = {}
+        # Wallet + ledger schema simulation tables
+        self.wallet_accounts: Dict[str, Dict[str, Any]] = {}
+        self.ledger_entries: List[Dict[str, Any]] = []
+        self.transfers: List[Dict[str, Any]] = []
+        self.payouts: List[Dict[str, Any]] = []
+        self.settlements: List[Dict[str, Any]] = []
+        self.idempotency_registry: Dict[str, Dict[str, Any]] = {}
+        self.stripe_profiles: Dict[str, StripeProfile] = {}
+        self.stripe_gateway = StripeGateway()
+        self.webhook_events_processed: set[str] = set()
+        self.webhook_queue: deque = deque()
         self.current_user: Optional[Account] = None
         self.data_file = "redline_data.json"
         
         # Initialize with demo data
         self._init_demo_data()
+
+    def _ensure_wallet_account(self, account: Account):
+        if not account.wallet:
+            return
+        if account.user_id not in self.wallet_accounts:
+            self.wallet_accounts[account.user_id] = {
+                "wallet_account_id": account.wallet.wallet_id,
+                "owner_id": account.user_id,
+                "balance": account.wallet.balance,
+                "created_at": datetime.now().isoformat(),
+            }
+
+    def _register_idempotency(self, key: Optional[str], operation: str) -> bool:
+        if not key:
+            return False
+        existing = self.idempotency_registry.get(key)
+        if existing:
+            return True
+        self.idempotency_registry[key] = {
+            "operation": operation,
+            "created_at": datetime.now().isoformat(),
+        }
+        return False
+
+    def _post_money_movement(
+        self,
+        account: Account,
+        amount: float,
+        description: str,
+        transaction_type: str,
+        idempotency_key: Optional[str] = None,
+        race_id: Optional[str] = None,
+        pick_id: Optional[str] = None,
+        settlement_id: Optional[str] = None,
+    ) -> bool:
+        if self._register_idempotency(idempotency_key, transaction_type):
+            console.print(f"[yellow]Idempotency key already consumed ({idempotency_key}); skipping duplicate.[/yellow]")
+            return False
+        if not account.wallet:
+            return False
+        self._ensure_wallet_account(account)
+        account.wallet.add_transaction(amount, description, transaction_type)
+        self.wallet_accounts[account.user_id]["balance"] = account.wallet.balance
+        ledger_entry = {
+            "ledger_entry_id": f"le_{uuid.uuid4().hex[:14]}",
+            "wallet_owner_id": account.user_id,
+            "wallet_account_id": account.wallet.wallet_id,
+            "amount": amount,
+            "description": description,
+            "transaction_type": transaction_type,
+            "balance_after": account.wallet.balance,
+            "race_id": race_id,
+            "pick_id": pick_id,
+            "settlement_id": settlement_id,
+            "idempotency_key": idempotency_key,
+            "created_at": datetime.now().isoformat(),
+        }
+        self.ledger_entries.append(ledger_entry)
+        return True
+
+    def start_connect_onboarding(self, account: Account):
+        if account.account_type not in {AccountType.JOCKEY, AccountType.TEAM_OWNER}:
+            return
+        details = self.stripe_gateway.start_connect_onboarding(account)
+        profile = self.stripe_profiles.get(account.user_id) or StripeProfile(account_id=account.user_id)
+        profile.connect_account_id = details["connect_account_id"]
+        profile.onboarding_complete = True
+        self.stripe_profiles[account.user_id] = profile
+
+    def add_customer_payment_method(self, account: Account, payment_method_token: str):
+        if account.account_type != AccountType.SPECTATOR:
+            return
+        details = self.stripe_gateway.attach_customer_payment_method(account, payment_method_token)
+        profile = self.stripe_profiles.get(account.user_id) or StripeProfile(account_id=account.user_id)
+        profile.customer_id = details["customer_id"]
+        profile.payment_method_ids.append(details["payment_method_id"])
+        self.stripe_profiles[account.user_id] = profile
+
+    def verify_webhook_signature(self, payload: str, signature: str) -> bool:
+        expected = hmac.new(self.stripe_gateway.webhook_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, signature)
+
+    def consume_webhook_event(self, payload: str, signature: str) -> bool:
+        if not self.verify_webhook_signature(payload, signature):
+            return False
+        event = json.loads(payload)
+        event_id = event.get("id")
+        if event_id in self.webhook_events_processed:
+            return True
+        self.webhook_queue.append(event)
+        self.webhook_events_processed.add(event_id)
+        return True
+
+    def run_reconciliation_workers(self):
+        while self.webhook_queue:
+            event = self.webhook_queue.popleft()
+            if event.get("type") == "payout.created":
+                self.payouts.append({
+                    "payout_id": event["data"].get("payout_id", f"po_{uuid.uuid4().hex[:10]}"),
+                    "amount": event["data"].get("amount", 0.0),
+                    "account_id": event["data"].get("account_id"),
+                    "status": "reconciled",
+                    "created_at": datetime.now().isoformat(),
+                })
+
+    def get_transaction_history(self, account: Account, race_id: Optional[str] = None, pick_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        history = [
+            item for item in self.ledger_entries
+            if item["wallet_owner_id"] == account.user_id
+            and (race_id is None or item.get("race_id") == race_id)
+            and (pick_id is None or item.get("pick_id") == pick_id)
+        ]
+        return sorted(history, key=lambda entry: entry["created_at"])
     
     def _init_demo_data(self):
         """Create realistic demo data"""
@@ -533,6 +695,13 @@ class RedlinePlatform:
             "spec_mike": spec1,
             "spec_sarah": spec2
         }
+
+        for acc in self.accounts.values():
+            self._ensure_wallet_account(acc)
+            if acc.account_type in {AccountType.JOCKEY, AccountType.TEAM_OWNER}:
+                self.start_connect_onboarding(acc)
+            elif acc.account_type == AccountType.SPECTATOR:
+                self.add_customer_payment_method(acc, f"tok_{acc.user_id}_card")
         
         # === CREATE SOME RUNS ===
         
@@ -688,7 +857,16 @@ class RedlinePlatform:
         }
         
         # Add winning transaction to spectator wallet
-        spec1_wallet.add_transaction(165.00, "Win payout - Christmas Eve Grudge Match", "pick_win")
+        self._post_money_movement(
+            spec1,
+            165.00,
+            "Win payout - Christmas Eve Grudge Match",
+            "pick_win",
+            idempotency_key="seed_pick_win_001",
+            race_id="run_003",
+            pick_id="pick_003",
+            settlement_id="set_seed_001",
+        )
     
     # ========================================================================
     # USER MANAGEMENT
@@ -1042,6 +1220,7 @@ class RedlinePlatform:
         console.print()
         
         # Recent transactions
+        ledger_history = self.get_transaction_history(account)
         if account.wallet.transactions:
             console.print("[cyan]═══ RECENT TRANSACTIONS ═══[/cyan]\n")
             
@@ -1067,6 +1246,13 @@ class RedlinePlatform:
                 table.add_row(date, trans_type, desc, amount_str, balance_str)
             
             console.print(table)
+            if ledger_history:
+                console.print("\n[cyan]═══ LEDGER LINE ITEMS (RACE/PICK/SETTLEMENT) ═══[/cyan]")
+                for item in ledger_history[-5:]:
+                    console.print(
+                        f"• {item['transaction_type']} | race={item.get('race_id') or '-'} | "
+                        f"pick={item.get('pick_id') or '-'} | settlement={item.get('settlement_id') or '-'}"
+                    )
         else:
             console.print("[dim]No transactions yet.[/dim]")
     
@@ -1260,8 +1446,26 @@ class RedlinePlatform:
         
         self.picks[pick_id] = new_pick
         
-        # Deduct from wallet
-        account.wallet.add_transaction(-amount, f"Pick - {run.name}", "pick_placed")
+        # Deduct from wallet with idempotency protection
+        self._post_money_movement(
+            account,
+            -amount,
+            f"Pick - {run.name}",
+            "pick_placed",
+            idempotency_key=f"pick_place_{pick_id}",
+            race_id=run_id,
+            pick_id=pick_id,
+        )
+        self.transfers.append({
+            "transfer_id": f"tr_{uuid.uuid4().hex[:10]}",
+            "from_account_id": account.user_id,
+            "to_account_id": f"escrow_{run_id}",
+            "amount": amount,
+            "reason": "pick_placement",
+            "pick_id": pick_id,
+            "race_id": run_id,
+            "created_at": datetime.now().isoformat(),
+        })
         
         # Show confirmation
         jockey = self.accounts[selected_jockey]
@@ -1401,7 +1605,24 @@ class RedlinePlatform:
                 return
             
             # Deduct entry fee
-            account.wallet.add_transaction(-run.entry_fee, f"Entry fee - {run.name}", "entry_fee")
+            if not self._post_money_movement(
+                account,
+                -run.entry_fee,
+                f"Entry fee - {run.name}",
+                "entry_fee",
+                idempotency_key=f"entry_fee_{run.run_id}_{account.user_id}",
+                race_id=run.run_id,
+            ):
+                return
+            self.transfers.append({
+                "transfer_id": f"tr_{uuid.uuid4().hex[:10]}",
+                "from_account_id": account.user_id,
+                "to_account_id": f"escrow_{run.run_id}",
+                "amount": run.entry_fee,
+                "reason": "entry_fee",
+                "race_id": run.run_id,
+                "created_at": datetime.now().isoformat(),
+            })
         
         # Add to participants
         run.participants.append(account.user_id)
@@ -1476,10 +1697,37 @@ class RedlinePlatform:
         run.results_posted = True
         run.picks_locked = True
         
+        settlement_id = f"set_{uuid.uuid4().hex[:12]}"
         # Pay out winner
         winner = self.accounts[winner_id]
         if winner.wallet:
-            winner.wallet.add_transaction(winner_payout, f"Win - {run.name}", "race_win")
+            self._post_money_movement(
+                winner,
+                winner_payout,
+                f"Win - {run.name}",
+                "race_win",
+                idempotency_key=f"race_payout_{run.run_id}_{winner_id}",
+                race_id=run.run_id,
+                settlement_id=settlement_id,
+            )
+            self.payouts.append({
+                "payout_id": f"po_{uuid.uuid4().hex[:10]}",
+                "account_id": winner_id,
+                "amount": winner_payout,
+                "race_id": run.run_id,
+                "settlement_id": settlement_id,
+                "created_at": datetime.now().isoformat(),
+            })
+            self.transfers.append({
+                "transfer_id": f"tr_{uuid.uuid4().hex[:10]}",
+                "from_account_id": f"escrow_{run.run_id}",
+                "to_account_id": winner_id,
+                "amount": winner_payout,
+                "reason": "race_payout",
+                "race_id": run.run_id,
+                "settlement_id": settlement_id,
+                "created_at": datetime.now().isoformat(),
+            })
         
         # Update winner's card
         if winner.redline_card:
@@ -1503,9 +1751,38 @@ class RedlinePlatform:
                 # Pay out to picker
                 picker = self.accounts.get(pick.user_id)
                 if picker and picker.wallet:
-                    picker.wallet.add_transaction(pick.payout, f"Pick win - {run.name}", "pick_win")
+                    self._post_money_movement(
+                        picker,
+                        pick.payout,
+                        f"Pick win - {run.name}",
+                        "pick_win",
+                        idempotency_key=f"pick_payout_{pick.pick_id}",
+                        race_id=run.run_id,
+                        pick_id=pick.pick_id,
+                        settlement_id=settlement_id,
+                    )
+                    self.transfers.append({
+                        "transfer_id": f"tr_{uuid.uuid4().hex[:10]}",
+                        "from_account_id": f"escrow_{run.run_id}",
+                        "to_account_id": picker.user_id,
+                        "amount": pick.payout,
+                        "reason": "pick_payout",
+                        "race_id": run.run_id,
+                        "pick_id": pick.pick_id,
+                        "settlement_id": settlement_id,
+                        "created_at": datetime.now().isoformat(),
+                    })
             else:
                 pick.won = False
+
+        self.settlements.append({
+            "settlement_id": settlement_id,
+            "run_id": run.run_id,
+            "winner_id": winner_id,
+            "winner_payout": winner_payout,
+            "pick_count": len(run_picks),
+            "created_at": datetime.now().isoformat(),
+        })
         
         # Show confirmation
         winner_name = winner.redline_card.name if winner.redline_card else winner.username
@@ -1520,6 +1797,38 @@ class RedlinePlatform:
             title="Results Posted",
             border_style="green"
         ))
+
+    def refund_pick(self, account: Account, pick_id: str):
+        """Refund a pick amount to the picker wallet with idempotency controls."""
+        pick = self.picks.get(pick_id)
+        if not pick:
+            return False
+        if pick.user_id != account.user_id:
+            return False
+        if pick.won is not None:
+            return False
+        if self._post_money_movement(
+            account,
+            pick.amount,
+            f"Refund - {pick_id}",
+            "refund",
+            idempotency_key=f"refund_{pick_id}",
+            race_id=pick.run_id,
+            pick_id=pick_id,
+        ):
+            self.transfers.append({
+                "transfer_id": f"tr_{uuid.uuid4().hex[:10]}",
+                "from_account_id": f"escrow_{pick.run_id}",
+                "to_account_id": account.user_id,
+                "amount": pick.amount,
+                "reason": "refund",
+                "race_id": pick.run_id,
+                "pick_id": pick_id,
+                "created_at": datetime.now().isoformat(),
+            })
+            return True
+        return False
+
 
 
 # ============================================================================

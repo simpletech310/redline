@@ -49,6 +49,8 @@ def run_smoke_test() -> None:
     demo = load_demo_module()
     platform = demo.RedlinePlatform()
 
+    assert platform.wallet_accounts, "Expected wallet_accounts table to be initialized"
+
     # Login with a spectator and place a pick on an existing run.
     assert platform.login("MikeTheSpec"), "Expected spectator login to succeed"
     spectator = platform.get_current_user()
@@ -76,9 +78,43 @@ def run_smoke_test() -> None:
     )
 
     platform.picks[pick_id] = new_pick
-    spectator.wallet.add_transaction(-amount, f"Pick placed - {run.name}", "pick_placed")
+    platform._post_money_movement(
+        spectator,
+        -amount,
+        f"Pick placed - {run.name}",
+        "pick_placed",
+        idempotency_key="smoke_pick_001",
+        race_id=run_id,
+        pick_id=pick_id,
+    )
+
+    # Duplicate should be skipped via idempotency key.
+    platform._post_money_movement(
+        spectator,
+        -amount,
+        f"Pick placed - {run.name}",
+        "pick_placed",
+        idempotency_key="smoke_pick_001",
+        race_id=run_id,
+        pick_id=pick_id,
+    )
 
     assert spectator.wallet.balance == start_balance - amount
+
+    history = platform.get_transaction_history(spectator, race_id=run_id, pick_id=pick_id)
+    assert len(history) == 1, "Expected retry-safe single history line item for pick"
+
+    # Validate webhook signature + retry-safe consumer and reconciliation worker.
+    payload = '{"id":"evt_smoke_1","type":"payout.created","data":{"payout_id":"po_smoke","amount":11.5,"account_id":"jockey_ghost"}}'
+    signature = demo.hmac.new(
+        platform.stripe_gateway.webhook_secret.encode(),
+        payload.encode(),
+        demo.hashlib.sha256,
+    ).hexdigest()
+    assert platform.consume_webhook_event(payload, signature)
+    assert platform.consume_webhook_event(payload, signature), "Duplicate webhook should be safely ignored"
+    platform.run_reconciliation_workers()
+    assert any(p["payout_id"] == "po_smoke" for p in platform.payouts)
 
     # Create a future run and join it with a jockey to validate entry deduction.
     assert platform.login("Turbo"), "Expected jockey login to succeed"
