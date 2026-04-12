@@ -86,14 +86,14 @@ export default function LoginPage() {
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <div>
             <label style={{ color: '#9ca3af', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', fontWeight: 600, display: 'block', marginBottom: '0.5rem' }}>
-              Email
+              Username or Email
             </label>
             <input
-              type="email"
+              type="text"
               className="input-carbon"
               value={form.email}
               onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
-              placeholder="yourname@redline.io"
+              placeholder="Username or Email"
               required
             />
           </div>
