@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Redline - Streaming Video Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #0a0a0a 0%, #1a0a0a 100%);
+      color: #fff;
+      padding: 20px;
+      min-height: 100vh;
+    }
+
+    .header {
+      text-align: center;
+      padding: 2rem 0;
+      margin-bottom: 2rem;
+      border-bottom: 1px solid rgba(239, 68, 68, 0.2);
+    }
+
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.5rem;
+    }
+
+    h1 span { color: #ef4444; }
+
+    .subtitle {
+      color: #666;
+      font-size: 0.9rem;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid #222;
+    }
+
+    .section-title h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .section-title .badge {
+      padding: 0.25rem 0.5rem;
+      background: rgba(239, 68, 68, 0.2);
+      color: #f87171;
+      font-size: 0.7rem;
+      font-weight: 700;
+      border-radius: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .stream-card {
+      background: linear-gradient(135deg, rgba(20, 20, 20, 0.9), rgba(15, 15, 15, 0.95));
+      border-radius: 16px;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+      transition: border-color 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .stream-card:hover {
+      border-color: rgba(239, 68, 68, 0.3);
+      box-shadow: 0 8px 32px rgba(239, 68, 68, 0.15);
+    }
+
+    .stream-card .meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1rem;
+    }
+
+    .stream-card .meta h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #fff;
+    }
+
+    .stream-card .meta .file-info {
+      font-size: 0.75rem;
+      color: #666;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.35rem 0.75rem;
+      border-radius: 8px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .status.loading {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+    }
+
+    .status.ready {
+      background: rgba(34, 197, 94, 0.15);
+      color: #4ade80;
+    }
+
+    .status.error {
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+    }
+
+    .status.live {
+      background: rgba(239, 68, 68, 0.9);
+      color: #fff;
+      animation: pulse-glow 2s infinite;
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+      50% { box-shadow: 0 0 0 8px rgba(239, 68, 68, 0); }
+    }
+
+    .status .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .video-container {
+      position: relative;
+      width: 100%;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #000;
+    }
+
+    .video-container video {
+      width: 100%;
+      display: block;
+      max-height: 400px;
+      object-fit: contain;
+      background: #000;
+    }
+
+    .sound-indicator {
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
+      padding: 0.5rem 0.75rem;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(8px);
+      border-radius: 8px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      cursor: pointer;
+      z-index: 10;
+      transition: background 0.2s ease;
+    }
+
+    .sound-indicator:hover {
+      background: rgba(239, 68, 68, 0.8);
+    }
+
+    .url-display {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 0.65rem;
+      color: #555;
+      word-break: break-all;
+      user-select: all;
+    }
+
+    .note {
+      background: linear-gradient(135deg, rgba(239, 68, 68, 0.1), rgba(239, 68, 68, 0.05));
+      border: 1px solid rgba(239, 68, 68, 0.2);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 2rem;
+      font-size: 0.875rem;
+      color: #fca5a5;
+    }
+
+    .note strong { color: #f87171; }
+
+    .success-note {
+      background: linear-gradient(135deg, rgba(34, 197, 94, 0.1), rgba(34, 197, 94, 0.05));
+      border-color: rgba(34, 197, 94, 0.2);
+      color: #86efac;
+    }
+
+    .success-note strong { color: #4ade80; }
+
+    .grid {
+      display: grid;
+      gap: 1.5rem;
+    }
+
+    @media (min-width: 768px) {
+      .grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1><span>REDLINE</span> TV</h1>
+    <p class="subtitle">Streaming Video Playback Test</p>
+  </div>
+
+  <div class="note">
+    <strong>Sound Test Instructions:</strong> Click the play button on each video.
+    Videos should play with sound. If muted, click the "Tap for sound" button or the volume icon in the video controls.
+  </div>
+
+  <!-- Supabase Streaming Video -->
+  <div class="section-title">
+    <h2>Supabase Streams</h2>
+    <span class="badge">Uploaded</span>
+  </div>
+
+  <div class="stream-card">
+    <div class="meta">
+      <div>
+        <h3>ScreenRecording_04-12-2026 14.mov</h3>
+        <span class="file-info">36MB | Supabase Storage</span>
+      </div>
+      <span id="supabase-status" class="status loading">
+        <span class="dot"></span> Loading
+      </span>
+    </div>
+    <div class="video-container">
+      <video
+        id="supabase-video"
+        controls
+        playsinline
+        webkit-playsinline
+        preload="metadata"
+      >
+        <source src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/streams/20260412_093840_9e0de924.mov" type="video/quicktime">
+        <source src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/streams/20260412_093840_9e0de924.mov" type="video/mp4">
+      </video>
+      <div id="supabase-sound" class="sound-indicator" style="display:none;">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M11 5L6 9H2v6h4l5 4V5z"/>
+          <line x1="23" y1="9" x2="17" y2="15"/>
+          <line x1="17" y1="9" x2="23" y2="15"/>
+        </svg>
+        Tap for sound
+      </div>
+    </div>
+    <div class="url-display">https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/streams/20260412_093840_9e0de924.mov</div>
+  </div>
+
+  <!-- Mux Streams Section (placeholder until Mux is configured) -->
+  <div class="section-title">
+    <h2>Mux Streams</h2>
+    <span class="badge">Pending Setup</span>
+  </div>
+
+  <div class="note success-note">
+    <strong>Mux Setup Required:</strong> To upload the larger streaming videos (57MB, 100MB) to Mux:
+    <ol style="margin-top: 0.75rem; margin-left: 1.25rem; line-height: 1.8;">
+      <li>Get Mux API credentials from <a href="https://dashboard.mux.com/" style="color: #4ade80;">dashboard.mux.com</a></li>
+      <li>Set environment variables: <code style="background: rgba(0,0,0,0.3); padding: 0.15rem 0.4rem; border-radius: 4px;">MUX_TOKEN_ID</code> and <code style="background: rgba(0,0,0,0.3); padding: 0.15rem 0.4rem; border-radius: 4px;">MUX_TOKEN_SECRET</code></li>
+      <li>Run: <code style="background: rgba(0,0,0,0.3); padding: 0.15rem 0.4rem; border-radius: 4px;">python3 mux-upload.py</code></li>
+    </ol>
+  </div>
+
+  <!-- Post Videos (for comparison) -->
+  <div class="section-title">
+    <h2>Post Videos (Supabase)</h2>
+    <span class="badge">Uploaded</span>
+  </div>
+
+  <div class="grid">
+    <div class="stream-card">
+      <div class="meta">
+        <div>
+          <h3>Portrait Video</h3>
+          <span class="file-info">14MB | 9:16 Aspect</span>
+        </div>
+        <span id="post1-status" class="status loading">
+          <span class="dot"></span> Loading
+        </span>
+      </div>
+      <div class="video-container">
+        <video
+          id="post1-video"
+          controls
+          playsinline
+          webkit-playsinline
+          preload="metadata"
+        >
+          <source src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/posts/20260412_093814_1431e88d.mov" type="video/quicktime">
+          <source src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/posts/20260412_093814_1431e88d.mov" type="video/mp4">
+        </video>
+      </div>
+    </div>
+
+    <div class="stream-card">
+      <div class="meta">
+        <div>
+          <h3>Landscape Video</h3>
+          <span class="file-info">35MB | 16:9 Aspect</span>
+        </div>
+        <span id="post2-status" class="status loading">
+          <span class="dot"></span> Loading
+        </span>
+      </div>
+      <div class="video-container">
+        <video
+          id="post2-video"
+          controls
+          playsinline
+          webkit-playsinline
+          preload="metadata"
+        >
+          <source src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/posts/20260412_093824_03d58fe9.mov" type="video/quicktime">
+          <source src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/posts/20260412_093824_03d58fe9.mov" type="video/mp4">
+        </video>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Video status tracking
+    function setupVideo(videoId, statusId, soundBtnId) {
+      const video = document.getElementById(videoId);
+      const status = document.getElementById(statusId);
+      const soundBtn = soundBtnId ? document.getElementById(soundBtnId) : null;
+
+      if (!video || !status) return;
+
+      video.addEventListener('loadedmetadata', () => {
+        const { videoWidth, videoHeight, duration } = video;
+        const ratio = videoWidth / videoHeight;
+        const aspectLabel = ratio < 0.9 ? 'Portrait' : ratio > 1.1 ? 'Landscape' : 'Square';
+        status.className = 'status ready';
+        status.innerHTML = '<span class="dot"></span> Ready';
+        console.log(`${videoId}: ${videoWidth}x${videoHeight} (${aspectLabel}), ${duration.toFixed(1)}s`);
+      });
+
+      video.addEventListener('error', () => {
+        status.className = 'status error';
+        status.innerHTML = '<span class="dot"></span> Error';
+      });
+
+      video.addEventListener('play', () => {
+        if (soundBtn && video.muted) {
+          soundBtn.style.display = 'flex';
+        }
+      });
+
+      video.addEventListener('volumechange', () => {
+        if (soundBtn) {
+          soundBtn.style.display = video.muted ? 'flex' : 'none';
+        }
+      });
+
+      if (soundBtn) {
+        soundBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          video.muted = false;
+          soundBtn.style.display = 'none';
+        });
+      }
+    }
+
+    // Initialize all videos
+    setupVideo('supabase-video', 'supabase-status', 'supabase-sound');
+    setupVideo('post1-video', 'post1-status');
+    setupVideo('post2-video', 'post2-status');
+  </script>
+</body>
+</html>

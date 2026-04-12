@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Redline - Mux Stream Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0a;
+      color: #fff;
+      padding: 20px;
+      min-height: 100vh;
+    }
+    h1 { color: #dc2626; margin-bottom: 10px; font-size: 24px; }
+    .subtitle { color: #666; margin-bottom: 30px; font-size: 14px; }
+    .stream-card {
+      background: #111;
+      border-radius: 16px;
+      padding: 20px;
+      margin-bottom: 24px;
+      border: 1px solid #222;
+    }
+    .stream-card h3 { color: #fff; margin-bottom: 12px; font-size: 16px; }
+    .stream-card p { color: #888; font-size: 12px; margin-bottom: 12px; }
+    .video-container {
+      position: relative;
+      width: 100%;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #000;
+    }
+    .video-container.portrait {
+      max-width: 280px;
+      margin: 0 auto;
+      aspect-ratio: 9/16;
+    }
+    .video-container.landscape {
+      aspect-ratio: 16/9;
+    }
+    .stream-card video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      border-radius: 12px;
+      background: #000;
+    }
+    .video-container.portrait video {
+      object-fit: cover;
+    }
+    .aspect-badge {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      padding: 4px 8px;
+      background: rgba(0,0,0,0.7);
+      border-radius: 6px;
+      font-size: 10px;
+      font-weight: 600;
+      color: #fff;
+      z-index: 10;
+    }
+    .url {
+      font-size: 10px;
+      color: #555;
+      word-break: break-all;
+      margin-top: 12px;
+      padding: 10px;
+      background: #0a0a0a;
+      border-radius: 6px;
+    }
+    .status {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 10px;
+    }
+    .status.ready { background: #166534; color: #4ade80; }
+    .status.loading { background: #854d0e; color: #fbbf24; }
+    .note {
+      background: rgba(239, 68, 68, 0.1);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 24px;
+      font-size: 14px;
+      color: #f87171;
+    }
+  </style>
+</head>
+<body>
+  <h1>REDLINE TV - Stream Test</h1>
+  <p class="subtitle">Testing Mux HLS streaming with sound</p>
+
+  <div class="note">
+    <strong>Sound Test:</strong> Click on the video to play. Videos should play with sound.
+    Click the volume icon or tap "Tap for sound" if muted.
+  </div>
+
+  <div class="stream-card">
+    <h3>ScreenRecording_04-12-2026 14.mov <span id="video0-status" class="status loading">Loading...</span></h3>
+    <p>34.7MB | Playback ID: 4y01jipTt01EL00DjkYF185NiUjSCJrm00aZG2hjf7njqLI</p>
+    <div id="container0" class="video-container">
+      <div id="badge0" class="aspect-badge">Detecting...</div>
+      <video
+        id="video0"
+        controls
+        playsinline
+        webkit-playsinline
+        poster="https://image.mux.com/4y01jipTt01EL00DjkYF185NiUjSCJrm00aZG2hjf7njqLI/thumbnail.jpg"
+      ></video>
+    </div>
+    <div class="url">https://stream.mux.com/4y01jipTt01EL00DjkYF185NiUjSCJrm00aZG2hjf7njqLI.m3u8</div>
+  </div>
+
+  <div class="stream-card">
+    <h3>ScreenRecording_04-12-2026 10.mov <span id="video1-status" class="status loading">Loading...</span></h3>
+    <p>55.2MB | Playback ID: kgWv028jbEtnXWMnV1jTigwbwsVxja69n00iqFMahbVKU</p>
+    <div id="container1" class="video-container">
+      <div id="badge1" class="aspect-badge">Detecting...</div>
+      <video
+        id="video1"
+        controls
+        playsinline
+        webkit-playsinline
+        poster="https://image.mux.com/kgWv028jbEtnXWMnV1jTigwbwsVxja69n00iqFMahbVKU/thumbnail.jpg"
+      ></video>
+    </div>
+    <div class="url">https://stream.mux.com/kgWv028jbEtnXWMnV1jTigwbwsVxja69n00iqFMahbVKU.m3u8</div>
+  </div>
+
+  <div class="stream-card">
+    <h3>ScreenRecording_04-12-2026 11.mov <span id="video2-status" class="status loading">Loading...</span></h3>
+    <p>95.6MB | Playback ID: xHUDHd01jffWo01dGMfI00w9IozU1sUm00VoVo00AZ006uBcY</p>
+    <div id="container2" class="video-container">
+      <div id="badge2" class="aspect-badge">Detecting...</div>
+      <video
+        id="video2"
+        controls
+        playsinline
+        webkit-playsinline
+        poster="https://image.mux.com/xHUDHd01jffWo01dGMfI00w9IozU1sUm00VoVo00AZ006uBcY/thumbnail.jpg"
+      ></video>
+    </div>
+    <div class="url">https://stream.mux.com/xHUDHd01jffWo01dGMfI00w9IozU1sUm00VoVo00AZ006uBcY.m3u8</div>
+  </div>
+
+  <script>
+    document.querySelectorAll('video').forEach((video, i) => {
+      const container = document.getElementById(`container${i}`);
+      const badge = document.getElementById(`badge${i}`);
+      const statusEl = document.getElementById(`video${i}-status`);
+      const urlEl = container.nextElementSibling;
+      const src = urlEl.textContent.trim();
+
+      // Detect aspect ratio when metadata loads
+      video.addEventListener('loadedmetadata', () => {
+        const { videoWidth, videoHeight } = video;
+        const ratio = videoWidth / videoHeight;
+
+        if (ratio < 0.9) {
+          container.classList.add('portrait');
+          badge.textContent = '9:16 Portrait';
+          badge.style.background = 'rgba(239, 68, 68, 0.8)';
+        } else if (ratio > 1.1) {
+          container.classList.add('landscape');
+          badge.textContent = '16:9 Landscape';
+        } else {
+          badge.textContent = '1:1 Square';
+        }
+
+        statusEl.textContent = 'Ready - Click to play with sound';
+        statusEl.className = 'status ready';
+        console.log(`Video ${i}: ${videoWidth}x${videoHeight}, ratio: ${ratio.toFixed(2)}`);
+      });
+
+      if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = src;
+      } else if (Hls.isSupported()) {
+        const hls = new Hls();
+        hls.loadSource(src);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.ERROR, (_, data) => {
+          if (data.fatal) {
+            statusEl.textContent = 'Error loading stream';
+            statusEl.className = 'status';
+            statusEl.style.background = '#7f1d1d';
+            statusEl.style.color = '#f87171';
+            badge.textContent = 'Error';
+          }
+        });
+      }
+    });
+  </script>
+</body>
+</html>

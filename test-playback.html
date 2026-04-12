@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Redline - Video Playback Test</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0a;
+      color: #fff;
+      padding: 20px;
+      min-height: 100vh;
+    }
+    h1 {
+      color: #dc2626;
+      margin-bottom: 10px;
+      font-size: 24px;
+    }
+    h2 {
+      color: #fff;
+      margin: 30px 0 15px;
+      font-size: 18px;
+      border-bottom: 1px solid #333;
+      padding-bottom: 10px;
+    }
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 14px;
+    }
+    .media-card {
+      background: #111;
+      border-radius: 12px;
+      padding: 15px;
+      margin-bottom: 20px;
+      border: 1px solid #222;
+    }
+    .media-card p {
+      color: #888;
+      font-size: 12px;
+      margin-bottom: 10px;
+    }
+    .media-card video, .media-card img {
+      width: 100%;
+      border-radius: 8px;
+      max-height: 400px;
+      object-fit: contain;
+      background: #000;
+    }
+    .url {
+      font-size: 10px;
+      color: #555;
+      word-break: break-all;
+      margin-top: 10px;
+      padding: 8px;
+      background: #0a0a0a;
+      border-radius: 4px;
+    }
+    .status {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      margin-left: 10px;
+    }
+    .status.loaded { background: #166534; color: #4ade80; }
+    .status.error { background: #7f1d1d; color: #f87171; }
+    .status.loading { background: #854d0e; color: #fbbf24; }
+    .note {
+      background: rgba(34, 211, 238, 0.1);
+      border: 1px solid rgba(34, 211, 238, 0.3);
+      border-radius: 8px;
+      padding: 12px;
+      margin: 20px 0;
+      font-size: 13px;
+      color: #22d3ee;
+    }
+  </style>
+</head>
+<body>
+  <h1>REDLINE - Video Playback Test</h1>
+  <p class="subtitle">Testing uploaded media files from Supabase storage</p>
+
+  <div class="note">
+    <strong>Sound Test:</strong> Videos should play with sound when you click play.
+    If muted, click the speaker icon or tap "Tap for sound" to enable audio.
+  </div>
+
+  <h2>📸 Post Image</h2>
+  <div class="media-card">
+    <p>IMG_2822 2.jpg <span id="img-status" class="status loading">Loading...</span></p>
+    <img
+      src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/posts/20260412_093813_62a1b3e1.jpg"
+      alt="Test image"
+      onload="document.getElementById('img-status').className='status loaded'; document.getElementById('img-status').textContent='Loaded'"
+      onerror="document.getElementById('img-status').className='status error'; document.getElementById('img-status').textContent='Error'"
+    >
+    <div class="url">https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/posts/20260412_093813_62a1b3e1.jpg</div>
+  </div>
+
+  <h2>🎬 Post Video 1 (Portrait Test - 14MB)</h2>
+  <div class="media-card">
+    <p>ScreenRecording_04-12-2026 13.mov <span id="vid1-status" class="status loading">Loading...</span></p>
+    <video
+      controls
+      playsinline
+      webkit-playsinline
+      preload="metadata"
+      onloadeddata="document.getElementById('vid1-status').className='status loaded'; document.getElementById('vid1-status').textContent='Ready - Click to play with sound'"
+      onerror="document.getElementById('vid1-status').className='status error'; document.getElementById('vid1-status').textContent='Error'"
+    >
+      <source src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/posts/20260412_093814_1431e88d.mov" type="video/quicktime">
+      <source src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/posts/20260412_093814_1431e88d.mov" type="video/mp4">
+      Your browser does not support the video tag.
+    </video>
+    <div class="url">https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/posts/20260412_093814_1431e88d.mov</div>
+  </div>
+
+  <h2>🎬 Post Video 2 (35MB)</h2>
+  <div class="media-card">
+    <p>ScreenRecording_04-12-2026 12.mov <span id="vid2-status" class="status loading">Loading...</span></p>
+    <video
+      controls
+      playsinline
+      webkit-playsinline
+      preload="metadata"
+      onloadeddata="document.getElementById('vid2-status').className='status loaded'; document.getElementById('vid2-status').textContent='Ready - Click to play with sound'"
+      onerror="document.getElementById('vid2-status').className='status error'; document.getElementById('vid2-status').textContent='Error'"
+    >
+      <source src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/posts/20260412_093824_03d58fe9.mov" type="video/quicktime">
+      <source src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/posts/20260412_093824_03d58fe9.mov" type="video/mp4">
+      Your browser does not support the video tag.
+    </video>
+    <div class="url">https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/posts/20260412_093824_03d58fe9.mov</div>
+  </div>
+
+  <h2>📺 Streaming Video (36MB)</h2>
+  <div class="media-card">
+    <p>ScreenRecording_04-12-2026 14.mov <span id="stream-status" class="status loading">Loading...</span></p>
+    <video
+      controls
+      playsinline
+      webkit-playsinline
+      preload="metadata"
+      onloadeddata="document.getElementById('stream-status').className='status loaded'; document.getElementById('stream-status').textContent='Ready - Click to play with sound'"
+      onerror="document.getElementById('stream-status').className='status error'; document.getElementById('stream-status').textContent='Error'"
+    >
+      <source src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/streams/20260412_093840_9e0de924.mov" type="video/quicktime">
+      <source src="https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/streams/20260412_093840_9e0de924.mov" type="video/mp4">
+      Your browser does not support the video tag.
+    </video>
+    <div class="url">https://lguqssoghrjlpsccauhl.supabase.co/storage/v1/object/public/redline/streams/20260412_093840_9e0de924.mov</div>
+  </div>
+
+  <h2>Upload Summary</h2>
+  <div class="note" style="background: rgba(74, 222, 128, 0.1); border-color: rgba(74, 222, 128, 0.3); color: #4ade80;">
+    <strong>✅ Successfully Uploaded:</strong><br>
+    • 1 Image (272KB)<br>
+    • 2 Post Videos (14MB + 35MB)<br>
+    • 1 Streaming Video (36MB)<br><br>
+    <strong>❌ Failed (Too Large - 50MB Supabase limit):</strong><br>
+    • ScreenRecording_04-12-2026 10.mov (57MB)<br>
+    • ScreenRecording_04-12-2026 11.mov (100MB)
+  </div>
+
+  <script>
+    // Log video metadata when loaded
+    document.querySelectorAll('video').forEach(video => {
+      video.addEventListener('loadedmetadata', function() {
+        console.log(`Video loaded: ${video.videoWidth}x${video.videoHeight}, duration: ${video.duration}s`);
+        const ratio = video.videoWidth / video.videoHeight;
+        console.log(`Aspect ratio: ${ratio.toFixed(2)} (${ratio < 1 ? 'Portrait' : ratio > 1 ? 'Landscape' : 'Square'})`);
+      });
+    });
+  </script>
+</body>
+</html>
