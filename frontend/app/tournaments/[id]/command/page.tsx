@@ -87,7 +87,7 @@ export default function TournamentCommandPage() {
     if (!selectedMatch || !winner) return;
     setPosting(true);
     try {
-      await postMatchResult(id, selectedMatch.id, { winner });
+      await postMatchResult(id, selectedMatch.id, winner);
       setSelectedMatch(null);
       setWinner('');
       load();
